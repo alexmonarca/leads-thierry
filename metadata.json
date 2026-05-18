@@ -1,0 +1,6 @@
+{
+  "name": "IARA CRM - Prospecção IA",
+  "description": "Plataforma de prospecção e gestão de leads via WhatsApp com acompanhamento em tempo real e automação SDR.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
