@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Copy, ExternalLink, CheckCircle2, AlertTriangle, ArrowRight, User, Phone, Send, Info } from 'lucide-react';
+import { Copy, ExternalLink, CheckCircle2, AlertTriangle, ArrowRight, User, Phone, Send, Info, Loader2 } from 'lucide-react';
 import { Lead } from '../types';
 import { cn, formatPhone, getWhatsAppUrl } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -37,10 +37,25 @@ export function ProspectingCard({ lead, onSend, dailyCount, limit, theme }: Pros
     window.open(url, '_blank');
   };
 
-  const handleConfirmContact = () => {
-    if (!lead) return;
-    onSend(lead.id, message);
+  const [isSending, setIsSending] = React.useState(false);
+
+  const handleConfirmContact = async () => {
+    if (!lead || isSending) return;
+    setIsSending(true);
+    try {
+      await onSend(lead.id, message);
+    } catch (err) {
+      console.error('Error in handleConfirmContact:', err);
+    } finally {
+      // We don't reset isSending immediately because the lead will change
+      // and the component will re-render with the new lead
+      setTimeout(() => setIsSending(false), 500);
+    }
   };
+
+  React.useEffect(() => {
+    setIsSending(false);
+  }, [lead?.id]);
 
   if (!lead) {
     return (
@@ -175,19 +190,28 @@ export function ProspectingCard({ lead, onSend, dailyCount, limit, theme }: Pros
 
               <div className="relative group">
                 <button
-                  disabled={reachedLimit}
+                  disabled={reachedLimit || isSending}
                   onClick={handleConfirmContact}
                   className={cn(
                     "w-full py-4 px-6 rounded-2xl flex items-center justify-center gap-3 font-bold transition-all border-2 active:scale-[0.98]",
-                    reachedLimit 
+                    (reachedLimit || isSending)
                       ? "border-zinc-800 text-zinc-600 cursor-not-allowed" 
                       : (theme === 'dark' 
                           ? "border-zinc-800 hover:bg-zinc-800 text-zinc-100" 
                           : "border-zinc-100 hover:bg-zinc-50 text-zinc-900 shadow-sm")
                   )}
                 >
-                  <CheckCircle2 size={18} className="text-green-500" />
-                  Contato feito com sucesso!
+                  {isSending ? (
+                    <>
+                      <Loader2 size={18} className="animate-spin text-orange-500" />
+                      Processando...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 size={18} className="text-green-500" />
+                      Contato feito com sucesso!
+                    </>
+                  )}
                   <div 
                     className="ml-auto relative"
                     onMouseEnter={() => setShowTooltip(true)}

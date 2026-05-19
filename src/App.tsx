@@ -127,33 +127,46 @@ export default function App() {
   };
 
   const handleSendMessage = async (leadId: string, text: string) => {
-    // Optimistic UI update
-    setDailyCount(prev => prev + 1);
-    
     const supabase = getSupabase();
+    
+    // Optimistic UI update for status and count
+    setDailyCount(prev => prev + 1);
+    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: 'contactado', last_contact_at: new Date().toISOString() } : l));
     
     if (supabase) {
       try {
+        console.log(`Updating lead ${leadId} to contactado...`);
+        
         // 1. Log the message
-        await supabase.from('messages_log').insert({
+        const { error: logError } = await supabase.from('messages_log').insert({
           lead_id: leadId,
           message_text: text,
         });
+        
+        if (logError) {
+          console.error('Error recording message log:', logError);
+          // We continue even if log fails, as status update is more important for the flow
+        }
 
         // 2. Update lead status
-        await supabase.from('leads').update({
+        const { error: updateError } = await supabase.from('leads').update({
           status: 'contactado' as LeadStatus,
           last_contact_at: new Date().toISOString()
         }).eq('id', leadId);
 
-        // 3. Refresh data
+        if (updateError) {
+          console.error('Error updating lead status:', updateError);
+          // If update failed, we might want to revert the local state? 
+          // But for now let's just log it.
+        } else {
+          console.log(`Lead ${leadId} updated successfully.`);
+        }
+
+        // 3. Refresh data to sync everything
         fetchData();
       } catch (error) {
-        console.error('Error recording message:', error);
+        console.error('Unexpected error in handleSendMessage:', error);
       }
-    } else {
-      // Mock update
-      setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: 'contactado', last_contact_at: new Date().toISOString() } : l));
     }
   };
 
