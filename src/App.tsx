@@ -24,6 +24,15 @@ const MOCK_TASKS: Task[] = [
   { id: '3', title: 'Configurar automação do lead Marcos', status: 'completed', created_at: new Date().toISOString() },
 ];
 
+const MOCK_MESSAGES: MessageLog[] = [
+  { id: 'm1', lead_id: '3', message_text: 'Olá Carla, estamos com uma oportunidade imperdível para novos parceiros!', sent_at: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString() },
+  { id: 'm2', lead_id: '4', message_text: 'Marcos, vi seu interesse no nosso sistema de vendas. Vamos agendar uma demonstração?', sent_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString() },
+  { id: 'm3', lead_id: '3', message_text: 'Perfeito Carla! Qual o melhor horário para ligarmos para você?', sent_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString() },
+  { id: 'm4', lead_id: '4', message_text: 'Excelente! A apresentação dura cerca de 15 minutos.', sent_at: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString() },
+  { id: 'm5', lead_id: '1', message_text: 'Oi Ricardo Santos, tudo bem? Me chamo Thierry, podemos conversar sobre vendas?', sent_at: new Date().toISOString() },
+  { id: 'm6', lead_id: '2', message_text: 'Oi Ana Beatriz! Vamos impulsionar suas vendas hoje?', sent_at: new Date().toISOString() },
+];
+
 export default function App() {
   const [activeTab, setActiveTab] = React.useState('dashboard');
   const [theme, setTheme] = React.useState<'light' | 'dark'>('dark');
@@ -61,17 +70,17 @@ export default function App() {
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'leads' },
-          () => fetchData()
+          () => fetchData(true)
         )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'messages_log' },
-          () => fetchData()
+          () => fetchData(true)
         )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'tasks' },
-          () => fetchData()
+          () => fetchData(true)
         )
         .subscribe();
 
@@ -85,15 +94,16 @@ export default function App() {
     }
   }, []);
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (silent = false) => {
+    if (!silent) setLoading(true);
     const supabase = getSupabase();
     try {
       if (!supabase) {
         console.warn('Supabase not configured. Using mock data.');
         setLeads(MOCK_LEADS);
         setTasks(MOCK_TASKS);
-        setDailyCount(42); // Random mock progress
+        setMessages(MOCK_MESSAGES);
+        setDailyCount(2); // Since MOCK_MESSAGES has 2 messages for today (m5 and m6)
       } else {
         // Real fetch from Supabase
         const { data: leadsData, error: leadsError } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
@@ -122,7 +132,7 @@ export default function App() {
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -137,18 +147,7 @@ export default function App() {
       try {
         console.log(`Updating lead ${leadId} to contactado...`);
         
-        // 1. Log the message
-        const { error: logError } = await supabase.from('messages_log').insert({
-          lead_id: leadId,
-          message_text: text,
-        });
-        
-        if (logError) {
-          console.error('Error recording message log:', logError);
-          // We continue even if log fails, as status update is more important for the flow
-        }
-
-        // 2. Update lead status
+        // 1. Update lead status FIRST so any concurrent/realtime queries immediately see the update
         const { error: updateError } = await supabase.from('leads').update({
           status: 'contactado' as LeadStatus,
           last_contact_at: new Date().toISOString()
@@ -156,14 +155,22 @@ export default function App() {
 
         if (updateError) {
           console.error('Error updating lead status:', updateError);
-          // If update failed, we might want to revert the local state? 
-          // But for now let's just log it.
         } else {
           console.log(`Lead ${leadId} updated successfully.`);
         }
 
-        // 3. Refresh data to sync everything
-        fetchData();
+        // 2. Log the message
+        const { error: logError } = await supabase.from('messages_log').insert({
+          lead_id: leadId,
+          message_text: text,
+        });
+        
+        if (logError) {
+          console.error('Error recording message log:', logError);
+        }
+
+        // 3. Refresh data to sync everything (silently)
+        fetchData(true);
       } catch (error) {
         console.error('Unexpected error in handleSendMessage:', error);
       }
@@ -201,7 +208,7 @@ export default function App() {
     if (supabase) {
       const { error } = await supabase.from('leads').update({ status: newStatus }).eq('id', leadId);
       if (error) console.error('Error updating lead status:', error);
-      fetchData(); // Refresh to ensure data consistency
+      fetchData(true); // Refresh to ensure data consistency silently
     } else {
       setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: newStatus } : l));
     }
@@ -241,7 +248,7 @@ export default function App() {
 
     switch (activeTab) {
       case 'dashboard':
-        return <Dashboard leads={leads} dailyCount={dailyCount} limit={SEND_LIMIT} theme={theme} isMock={isMock} onViewHistory={() => setActiveTab('history')} />;
+        return <Dashboard leads={leads} messages={messages} dailyCount={dailyCount} limit={SEND_LIMIT} theme={theme} isMock={isMock} onViewHistory={() => setActiveTab('history')} />;
       case 'prospecting':
         return (
           <ProspectingCard 

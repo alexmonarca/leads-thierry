@@ -2,10 +2,11 @@ import * as React from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 import { TrendingUp, Users, Send, Target, ArrowUpRight, Zap } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { Lead } from '../types';
+import { Lead, MessageLog } from '../types';
 
 interface DashboardProps {
   leads: Lead[];
+  messages: MessageLog[];
   dailyCount: number;
   limit: number;
   theme: 'light' | 'dark';
@@ -13,7 +14,7 @@ interface DashboardProps {
   onViewHistory: () => void;
 }
 
-export function Dashboard({ leads, dailyCount, limit, theme, isMock, onViewHistory }: DashboardProps) {
+export function Dashboard({ leads, messages, dailyCount, limit, theme, isMock, onViewHistory }: DashboardProps) {
   const [tipIndex, setTipIndex] = React.useState(0);
   const respondedStatusCount = leads.filter(l => l.status === 'respondido').length;
 
@@ -38,15 +39,37 @@ export function Dashboard({ leads, dailyCount, limit, theme, isMock, onViewHisto
     { label: 'Respostas', value: respondedStatusCount, icon: TrendingUp, color: 'text-green-500', bg: 'bg-green-500/10' },
   ];
 
-  const chartData = [
-    { name: 'Seg', disparos: 45 },
-    { name: 'Ter', disparos: 52 },
-    { name: 'Qua', disparos: 89 },
-    { name: 'Qui', disparos: 75 },
-    { name: 'Sex', disparos: 98 },
-    { name: 'Sáb', disparos: dailyCount },
-    { name: 'Dom', disparos: 0 },
-  ];
+  // Dynamically calculate message counts over the last 7 days
+  const chartData = React.useMemo(() => {
+    const weekdays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date();
+      // subtract days: index 0 is 6 days ago, index 6 is today
+      d.setDate(d.getDate() - (6 - i));
+      
+      const dayName = weekdays[d.getDay()];
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const dateString = `${year}-${month}-${day}`; // ISO yyyy-mm-dd
+      
+      // Filter message logs on this day
+      const count = (messages || []).filter(m => {
+        if (!m.sent_at) return false;
+        try {
+          const mDateStr = m.sent_at.slice(0, 10); // e.g. "2026-05-20"
+          return mDateStr === dateString;
+        } catch {
+          return false;
+        }
+      }).length;
+      
+      return {
+        name: dayName,
+        disparos: count,
+      };
+    });
+  }, [messages]);
 
   return (
     <div className="space-y-8">
@@ -102,7 +125,7 @@ export function Dashboard({ leads, dailyCount, limit, theme, isMock, onViewHisto
         )}>
           <div className="flex items-center justify-between mb-8">
             <div>
-              <h3 className="text-lg font-bold">Atividade de Disparos</h3>
+              <h3 className="text-lg font-bold">Atividade de Mensagens</h3>
               <p className="text-zinc-500 text-xs">Evolução de mensagens enviadas na semana</p>
             </div>
             <select className={cn(
