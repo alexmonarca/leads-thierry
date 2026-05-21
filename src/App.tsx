@@ -43,7 +43,9 @@ export default function App() {
   const [loading, setLoading] = React.useState(true);
   const [session, setSession] = React.useState<any>(null);
   const [authChecking, setAuthChecking] = React.useState(true);
+  const [dbError, setDbError] = React.useState<string | null>(null);
 
+  const fetchCounterRef = React.useRef(0);
   const isMock = !getSupabase();
   const SEND_LIMIT = 100;
 
@@ -95,20 +97,27 @@ export default function App() {
   }, []);
 
   const fetchData = async (silent = false) => {
+    fetchCounterRef.current += 1;
+    const currentFetchId = fetchCounterRef.current;
+
     if (!silent) setLoading(true);
     const supabase = getSupabase();
     try {
       if (!supabase) {
         console.warn('Supabase not configured. Using mock data.');
-        setLeads(MOCK_LEADS);
-        setTasks(MOCK_TASKS);
-        setMessages(MOCK_MESSAGES);
-        setDailyCount(2); // Since MOCK_MESSAGES has 2 messages for today (m5 and m6)
+        if (currentFetchId === fetchCounterRef.current) {
+          setLeads(MOCK_LEADS);
+          setTasks(MOCK_TASKS);
+          setMessages(MOCK_MESSAGES);
+          setDailyCount(2); // Since MOCK_MESSAGES has 2 messages for today (m5 and m6)
+        }
       } else {
         // Real fetch from Supabase
-        const { data: leadsData, error: leadsError } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
-        const { data: tasksData, error: tasksError } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
-        const { data: logsData, error: logsError } = await supabase.from('messages_log').select('*').order('sent_at', { ascending: false });
+        const [{ data: leadsData, error: leadsError }, { data: tasksData, error: tasksError }, { data: logsData, error: logsError }] = await Promise.all([
+          supabase.from('leads').select('*').order('created_at', { ascending: false }),
+          supabase.from('tasks').select('*').order('created_at', { ascending: false }),
+          supabase.from('messages_log').select('*').order('sent_at', { ascending: false })
+        ]);
         
         if (leadsError) console.error('Erro ao buscar leads:', leadsError.message, leadsError.details);
         if (tasksError) console.error('Erro ao buscar tarefas:', tasksError.message, tasksError.details);
@@ -121,24 +130,38 @@ export default function App() {
           .select('*', { count: 'exact', head: true })
           .gte('sent_at', `${today}T00:00:00`)
           .lte('sent_at', `${today}T23:59:59`);
-
+ 
         if (countError) console.error('Erro ao contar mensagens:', countError.message);
-
-        if (leadsData) setLeads(leadsData);
-        if (tasksData) setTasks(tasksData);
-        if (logsData) setMessages(logsData);
-        if (count !== null) setDailyCount(count);
+ 
+        // Only apply state updates if this fetch is the absolute latest initiated fetch
+        if (currentFetchId === fetchCounterRef.current) {
+          if (leadsData) setLeads(leadsData);
+          if (tasksData) setTasks(tasksData);
+          if (logsData) setMessages(logsData);
+          if (count !== null) setDailyCount(count);
+          // If a previous RLS/DB error succeeded, error might clear or we leave it.
+        } else {
+          console.log('Ignore stale fetch data to prevent race-condition reversion.');
+        }
       }
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
-      if (!silent) setLoading(false);
+      if (currentFetchId === fetchCounterRef.current) {
+        if (!silent) setLoading(false);
+      }
     }
   };
 
   const handleSendMessage = async (leadId: string, text: string) => {
     const supabase = getSupabase();
     
+    const previousLeads = [...leads];
+    const previousDailyCount = dailyCount;
+
+    // Clear previous dbErrors
+    setDbError(null);
+
     // Optimistic UI update for status and count
     setDailyCount(prev => prev + 1);
     setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: 'contactado', last_contact_at: new Date().toISOString() } : l));
@@ -147,16 +170,33 @@ export default function App() {
       try {
         console.log(`Updating lead ${leadId} to contactado...`);
         
-        // 1. Update lead status FIRST so any concurrent/realtime queries immediately see the update
-        const { error: updateError } = await supabase.from('leads').update({
+        // 1. Update lead status FIRST with .select() to verify if it successfully modified the row
+        const { data: updateData, error: updateError } = await supabase.from('leads').update({
           status: 'contactado' as LeadStatus,
           last_contact_at: new Date().toISOString()
-        }).eq('id', leadId);
+        }).eq('id', leadId).select();
 
         if (updateError) {
           console.error('Error updating lead status:', updateError);
+          setDbError(`Ocorreu um erro ao atualizar o lead no Supabase: "${updateError.message}". Certifique-se de que as permissões de Row Level Security (RLS) estão configuradas corretamente utilizando o script "supabase-schema.sql" anexado.`);
+          
+          // Revert optimistic updates
+          setLeads(previousLeads);
+          setDailyCount(previousDailyCount);
+          return;
+        } else if (!updateData || updateData.length === 0) {
+          console.error('No rows were updated in leads table. RLS probably blocked the change.');
+          setDbError(`⚠️ Erro do Supabase (RLS): O status não pôde ser atualizado de "novo" para "contactado" no banco de dados. Isso ocorre porque o Row Level Security (RLS) está ATIVO na tabela "leads", mas não há políticas de segurança que permitam atualizações automáticas. Para corrigir isso instantaneamente, copie o comando abaixo e execute-o no "SQL Editor" do Supabase:\n\nALTER TABLE leads DISABLE ROW LEVEL SECURITY;`);
+          
+          // Revert optimistic updates
+          setLeads(previousLeads);
+          setDailyCount(previousDailyCount);
+          return;
         } else {
           console.log(`Lead ${leadId} updated successfully.`);
+          // Sync local state with exact data returned from database to prevent race conditions
+          const updatedRow = updateData[0];
+          setLeads(prev => prev.map(l => l.id === leadId ? { ...l, ...updatedRow } : l));
         }
 
         // 2. Log the message
@@ -167,12 +207,16 @@ export default function App() {
         
         if (logError) {
           console.error('Error recording message log:', logError);
+          // Non-critical, but let's notify the console
         }
 
         // 3. Refresh data to sync everything (silently)
         fetchData(true);
-      } catch (error) {
+      } catch (error: any) {
         console.error('Unexpected error in handleSendMessage:', error);
+        setDbError(`Erro inesperado ao salvar contato: ${error?.message || error}`);
+        setLeads(previousLeads);
+        setDailyCount(previousDailyCount);
       }
     }
   };
@@ -204,13 +248,39 @@ export default function App() {
   };
 
   const handleUpdateStatus = async (leadId: string, newStatus: LeadStatus) => {
+    const previousLeads = [...leads];
+    setDbError(null);
+
+    // Optimistic UI update instantly for reactive responsive feel
+    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: newStatus } : l));
+
     const supabase = getSupabase();
     if (supabase) {
-      const { error } = await supabase.from('leads').update({ status: newStatus }).eq('id', leadId);
-      if (error) console.error('Error updating lead status:', error);
-      fetchData(true); // Refresh to ensure data consistency silently
-    } else {
-      setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: newStatus } : l));
+      try {
+        // Use .select() to verify if the server actually modified the row (detects RLS blockage)
+        const { data: updateData, error } = await supabase.from('leads').update({ status: newStatus }).eq('id', leadId).select();
+        if (error) {
+          console.error('Error updating lead status in Leads Tab:', error);
+          setDbError(`Erro ao atualizar status do lead para "${newStatus}": "${error.message}". Verifique as políticas de RLS ou conexões de rede no Supabase.`);
+          
+          // Revert optimistic update
+          setLeads(previousLeads);
+        } else if (!updateData || updateData.length === 0) {
+          console.error('No rows were updated in leads table on Leads Tab. RLS probably blocked the change.');
+          setDbError(`⚠️ Erro do Supabase (RLS): O status não pôde ser atualizado. O Row Level Security (RLS) está ATIVO na tabela "leads", impedindo atualizações. Para permitir atualizações na guia Leads e na Prospecção, execute o comando abaixo no SQL Editor do Supabase:\n\nALTER TABLE leads DISABLE ROW LEVEL SECURITY;`);
+          
+          // Revert optimistic update
+          setLeads(previousLeads);
+        } else {
+          // Sync local state
+          const updatedRow = updateData[0];
+          setLeads(prev => prev.map(l => l.id === leadId ? { ...l, ...updatedRow } : l));
+          fetchData(true); // Refresh to ensure data consistency silently
+        }
+      } catch (err: any) {
+        console.error('Unexpected error in handleUpdateStatus:', err);
+        setLeads(previousLeads);
+      }
     }
   };
 
@@ -287,6 +357,20 @@ export default function App() {
         if (supabase) await supabase.auth.signOut();
       }}
     >
+      {dbError && (
+        <div className="mb-6 p-4 rounded-2xl bg-red-500/15 border border-red-500/20 text-red-500 text-xs font-semibold flex items-center justify-between gap-4 shadow-lg">
+          <div className="flex items-center gap-3">
+            <span className="text-sm">⚠️</span>
+            <p className="leading-relaxed">{dbError}</p>
+          </div>
+          <button 
+            onClick={() => setDbError(null)} 
+            className="shrink-0 text-red-500/60 hover:text-red-500 font-bold px-3 py-1.5 rounded-xl hover:bg-red-500/10 transition-colors"
+          >
+            Fechar
+          </button>
+        </div>
+      )}
       {content}
     </Layout>
   );

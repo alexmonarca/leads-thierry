@@ -50,3 +50,35 @@ $$ LANGUAGE plpgsql;
 -- INSERT INTO leads (name, phone, status) VALUES 
 -- ('João Silva', '11999999999', 'novo'),
 -- ('Maria Oliveira', '11888888888', 'novo');
+
+-- 7. Row Level Security (RLS) Policies
+-- By default, newly created tables in Supabase may have RLS enabled automatically.
+-- Run these commands in your Supabase SQL Editor to make sure updates and inserts are authorized!
+
+-- Enable RLS on all tables
+ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE messages_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+
+-- Drop existing policies if they exist to prevent duplicates
+DROP POLICY IF EXISTS "Permitir leitura para todos" ON leads;
+DROP POLICY IF EXISTS "Permitir insercao para todos" ON leads;
+DROP POLICY IF EXISTS "Permitir atualizacao para todos" ON leads;
+DROP POLICY IF EXISTS "Permitir a todos ler logs de mensagens" ON messages_log;
+DROP POLICY IF EXISTS "Permitir a todos inserir logs de mensagens" ON messages_log;
+DROP POLICY IF EXISTS "Permitir a todos ler tarefas" ON tasks;
+DROP POLICY IF EXISTS "Permitir a todos cadastrar tarefas" ON tasks;
+DROP POLICY IF EXISTS "Permitir a todos atualizar tarefas" ON tasks;
+
+-- Create simple permissive policies for development/production access
+CREATE POLICY "Permitir leitura para todos" ON leads FOR SELECT USING (true);
+CREATE POLICY "Permitir insercao para todos" ON leads FOR INSERT WITH CHECK (true);
+CREATE POLICY "Permitir atualizacao para todos" ON leads FOR UPDATE USING (true) WITH CHECK (true);
+
+CREATE POLICY "Permitir a todos ler logs de mensagens" ON messages_log FOR SELECT USING (true);
+CREATE POLICY "Permitir a todos inserir logs de mensagens" ON messages_log FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Permitir a todos ler tarefas" ON tasks FOR SELECT USING (true);
+CREATE POLICY "Permitir a todos cadastrar tarefas" ON tasks FOR INSERT WITH CHECK (true);
+CREATE POLICY "Permitir a todos atualizar tarefas" ON tasks FOR UPDATE USING (true) WITH CHECK (true);
+

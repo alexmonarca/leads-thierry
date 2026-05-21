@@ -36,7 +36,7 @@ export function Dashboard({ leads, messages, dailyCount, limit, theme, isMock, o
     { label: 'Total de Leads', value: leads.length, icon: Users, color: 'text-blue-500', bg: 'bg-blue-500/10' },
     { label: 'Disparos Hoje', value: dailyCount, icon: Send, color: 'text-orange-500', bg: 'bg-orange-500/10' },
     { label: 'Meta Diária', value: limit, icon: Target, color: 'text-purple-500', bg: 'bg-purple-500/10' },
-    { label: 'Respostas', value: respondedStatusCount, icon: TrendingUp, color: 'text-green-500', bg: 'bg-green-500/10' },
+    { label: 'Respostas Totais', value: respondedStatusCount, icon: TrendingUp, color: 'text-green-500', bg: 'bg-green-500/10' },
   ];
 
   // Dynamically calculate message counts over the last 7 days
